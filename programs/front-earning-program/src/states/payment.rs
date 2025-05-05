@@ -19,8 +19,10 @@ pub struct Payment {
     pub discount_bps: u16,
     pub start_ts: i64,
     pub status: PaymentStatus,
+    pub gap_amount: u64,
+    pub gap_shares: u64,
 }
 
 impl Payment { 
-    pub const LEN: usize = 8 + 32*3 + 8 + 8 + 32 + 2 + 8 + 1; 
+    pub const LEN: usize = 8 + 32 + 32 + 32 + 8 * 5 + 2 + 1 + 1;
 }

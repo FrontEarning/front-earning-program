@@ -17,63 +17,55 @@ sequenceDiagram
   Program->>USD* Vault: deposit 100 USD*
   alt After 1 year
     Seller->>Program: settle()
-    Program->>Seller: 102 (≈ principal + 2)
-    Program->>Borrower: 4 → gap (2) + yield (2)
+    Program->>Seller: principal + yield / 2
+    Program->>Borrower: gap + yield / 2
   end
 ```
 
 ## Instructions
 
-1. init_config
+| # | Instruction | Caller | Purpose |
+|---|-------------|--------|---------|
+| 1 | **`init_config`** | Owner | One‑time bootstrap. Sets per‑token discount BPS and `settle_wait_secs`. |
+| 2 | **`update_config`** | Owner | Update discount BPS or waiting period. |
+| 3 | **`deposit_liquidity`** | Borrower | Deposit USDC/USDT/USD\*. Non‑USD\* coins are auto‑swapped to USD\* via Numeraire, then pooled for shares. |
+| 4 | **`withdraw_liquidity`** | Borrower | Redeem unallocated shares for USD\* (+ accrued APY). |
+| 5 | **`initialize_payment`** | Seller | List a product (`price` u64). Creates a `Payment` PDA (`status = Initialized`). |
+| 6 | **`execute_payment`** | Buyer | Pay with discount. Pool automatically supplies the gap (`allocate_gap` internal CPI). `status = Funded`. |
+| 7 | **`settle`** | Seller | After `settle_wait_secs`: Seller gets **principal + ½ yield**, participating borrowers get **gap + ½ yield**. `status = Settled`. |
 
-Owner bootstrap - set per-token discount BPS and default periods. `usdc_discount`, `usdt_discount`, `usd_star_discount`. (u16, in bps)
+> `allocate_gap` is internal; it’s invoked by `execute_payment` and never called directly.
 
-2. update_config
-
-Owner runtime update of the same fields + `settle_wait_secs`.
-
-3. init_payment
-
-Seller lists a product. Seeds = `[b"payment", seller, price]`. Args = `price` (u64, 6 decimals).
-Initial status = `Initialized`.
-
-4. execute_payment
-
-Buyer pays `amount`. Transfers discounted amount to vault. If not already USD*, Numeraire `swap_exact_in` CPI call swaps to USD*. And records `paid_amount`, `paid_mint`, `start_ts`.
-After payment, status will be set to `Funded`.
-
-5. invest_gap
-
-Borrower locks any USD*/USDC/USDT gap capital. PDA seeds [b"investment", borrower].
-Status => Locked.
-
-6. settle
-
-Callable by seller after `settle_wait_secs`. Status => Settled.
-
-7. withdraw_investment
-
-Borrower withdraws after `invest_lock_secs` (default 1 year). Status => Withdrawn.
 
 ## Flow
 
 ```mermaid
 flowchart LR
   subgraph Off‑chain
-    A[Mobile / Web dApp]
-    B[Backend Scheduler]
+    UI[Web / Mobile dApp]
+    Cron[Backend Scheduler]
   end
   subgraph On‑chain (Anchor)
-    P[Program<br/>Rebate Pay]
-    VaultUSDC((Vault USDC))
+    P[Front‑Earning<br/>Program]
+    Pool[(LiquidityPool)]
     VaultUSD*[(Vault USD*)]
     N{{Numeraire<br/>AMM}}
+    Perena[[Perena<br/>Seed Pool]]
   end
-  A -- sign TX --> P
-  P -- CPI swap --> N
-  P -- deposit --> VaultUSD*
-  B -- cron settle --> P
-  P -- payout --> A
+
+  UI -- deposit_liquidity --> P
+  P -- swap? --> N
+  P -- mint shares --> Pool
+  P -- deposit USD* --> VaultUSD*
+  VaultUSD* -- stake --> Perena
+
+  UI -- execute_payment --> P
+  P -- allocate_gap --> Pool
+  P -- goods off‑chain --> UI
+
+  Cron -- settle_wait_secs --> P
+  P -- payout principal+yield --> UI
+  P -- payout gap+yield --> UI
 ```
 
 ## Build & Test
@@ -110,3 +102,8 @@ anchor deploy --provider.cluster devnet --program-name front-earning-program
 solana address -k target/deploy/front-earning-program-keypair.json
 solana account <program-id>
 ```
+
+### Notes
+* The pool stakes all USD\* in Perena’s Seed Pool — base APY accrues automatically.
+* Gap allocation is **FIFO**; rounding error is ≤ 1 lamport.
+* If the pool lacks liquidity for the requested discount, `execute_payment` fails with `GapTooLarge`.

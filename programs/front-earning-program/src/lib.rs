@@ -12,7 +12,10 @@ declare_id!("CCxyEA1iGXgbDTseF52h3vPK867Gjm2JiPaA15xH86gY");
 pub use instructions::{
     init_config,
     initialize_payment,
-    invest_gap,
-    withdraw_investment,
     execute_payment,
+    withdraw_liquidity,
+    deposit_liquidity,
+    update_config,
+    settle,
+    // allocate_gap is internal
 };

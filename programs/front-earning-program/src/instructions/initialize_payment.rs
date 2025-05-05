@@ -6,7 +6,6 @@ pub fn initialize_payment(
     price: u64,
 ) -> Result<()> {
     require!(price > 0, CustomError::InputTooSmall);
-    let config = &ctx.accounts.config;
     let payment = &mut ctx.accounts.payment;
 
     payment.seller = ctx.accounts.seller.key();
@@ -15,6 +14,8 @@ pub fn initialize_payment(
     payment.paid_amount = 0;
     payment.paid_mint = Pubkey::default();
     payment.status = PaymentStatus::Initialized;
+    payment.gap_amount = 0;
+    payment.gap_shares = 0;
 
     Ok(())
 }

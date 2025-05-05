@@ -5,9 +5,11 @@ use crate::{states::{payment::*, config::*}, error::CustomError};
 pub fn settle(
     ctx: Context<Settle>,
 ) -> Result<()> {
+    require!(ctx.accounts.payment.status == PaymentStatus::Funded, CustomError::InvalidState);
+
     let now = Clock::get()?.unix_timestamp;
     let config = &ctx.accounts.config;
-    require!(ctx.accounts.payment.status == PaymentStatus::Funded, CustomError::InvalidState);
+    let wait_secs = config.settle_wait_secs;
     require!(now > ctx.accounts.payment.start_ts + config.settle_wait_secs, CustomError::NotMature);
     
     let total = ctx.accounts.payment.paid_amount * 104 / 100;

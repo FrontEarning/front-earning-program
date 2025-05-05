@@ -2,7 +2,8 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, Approve};
-use crate::states::{payment::*, Config};
+use crate::{allocate_gap, handle_allocate_gap};
+use crate::states::{payment::*, Config, LiquidityPool};
 use crate::error::CustomError;
 
 const SWAP_EXACT_IN_DISCRIMINATOR: [u8; 8] = [104, 104, 131, 86, 161, 189, 180, 216];
@@ -14,14 +15,15 @@ pub fn execute_payment(
     out_index: u8,
     min_out: u64,
 ) -> Result<()> {
-    // 1. Find discount
+    // 1. Discount & gap
     let config = &ctx.accounts.config;
     let discount_bps = config.usdc_discount_bps as u64; // TODO : match by other token mints
     let discounted = amount * (10_000 - discount_bps) / 10_000;
+    let gap_amount = amount.checked_sub(discounted).unwrap();
 
     require!(ctx.accounts.payment.status == PaymentStatus::Initialized, CustomError::InvalidState);
 
-    // 1. transfer token buyer -> vault_in, amount = discounted
+    // 2. Token flow: Buyer -> vault_in (buyer token), token amount = discounted
     token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
@@ -34,9 +36,9 @@ pub fn execute_payment(
         discounted,
     )?;
 
-    // 2. approve vault for pool pull
+    // 3. approve vault for pool pull (for swap)
     let binding = ctx.accounts.payment.key();
-    let seeds = &[
+    let vault_seeds = &[
         b"vault",
         binding.as_ref(),
         &[ctx.bumps.vault_in],
@@ -49,18 +51,22 @@ pub fn execute_payment(
                 delegate: ctx.accounts.payer.to_account_info(),
                 authority: ctx.accounts.vault_in.to_account_info(),
             },
-            &[seeds],
+            &[vault_seeds],
         ),
-        discounted
+        discounted,
     )?;
 
-    // 3. call swap_exact_in via numeraire(perena) CPI
-    let payload = (in_index, out_index, discounted, min_out).try_to_vec()?;
+    // 4. call swap_exact_in via numeraire(perena) CPI
     let mut data = SWAP_EXACT_IN_DISCRIMINATOR.to_vec();
-    data.extend(payload);
+    data.extend(&SwapExactInHintlessData {
+        in_index,
+        out_index,
+        exact_amount_in: discounted,
+        min_amount_out: min_out,
+    }.try_to_vec()?);
 
     let ix = Instruction {
-        program_id: *ctx.accounts.pool.owner,
+        program_id: *ctx.accounts.pool.to_account_info().owner,
         accounts: vec![
             AccountMeta::new(ctx.accounts.pool.key(), true),
             AccountMeta::new(ctx.accounts.in_mint.key(), false),
@@ -75,7 +81,7 @@ pub fn execute_payment(
         data,
     };
     invoke_signed(&ix, &[
-        ctx.accounts.pool.clone(),
+        ctx.accounts.pool.to_account_info().clone(),
         ctx.accounts.in_mint.clone(),
         ctx.accounts.out_mint.clone(),
         ctx.accounts.vault_in.to_account_info(),
@@ -84,9 +90,28 @@ pub fn execute_payment(
         ctx.accounts.vault_in.to_account_info(),
         ctx.accounts.token_program.to_account_info(),
         ctx.accounts.token_2022_program.clone(),
-    ], &[seeds])?;
+    ], &[vault_seeds])?;
+
+    // 5. Draw gap from liquidity pool (USD*) -> vault_out
+    if gap_amount > 0 {
+        // a) Update pool + payment shares via CPI to internal module
+        handle_allocate_gap(&mut ctx.accounts.payment, &mut ctx.accounts.pool, gap_amount)?;
+
+        // b) transfer USD* tokens from pool vault to vault_out
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.vault_pool_usd_star.to_account_info(),
+                    to: ctx.accounts.vault_out.to_account_info(),
+                    authority: ctx.accounts.vault_pool_usd_star.to_account_info(),
+                },
+            ),
+            gap_amount,
+        )?;
+    }
     
-    // 4. record payment state
+    // 6. record payment state
     let payment = &mut ctx.accounts.payment;
     payment.buyer = ctx.accounts.buyer.key();
     payment.paid_mint = ctx.accounts.in_mint.key();
@@ -105,6 +130,12 @@ pub struct ExecutePayment<'info> {
 
     #[account(seeds=[b"config"], bump)]
     pub config: Account<'info, Config>,
+
+    #[account(mut, seeds=[b"pool"], bump = pool.bump)]
+    pub pool: Account<'info, LiquidityPool>,
+
+    #[account(mut, seeds=[b"vault_pool"], bump)]
+    pub vault_pool_usd_star: Account<'info, TokenAccount>,
 
     // Token vault that temporarily hodls buyer token(PDA)
     #[account(
@@ -130,7 +161,7 @@ pub struct ExecutePayment<'info> {
     // ---------- Numeraire pool & related (perena swap) ----------
     /// CHECK: pool
     #[account(mut)]
-    pub pool: AccountInfo<'info>,
+    pub numeraire_pool_account: AccountInfo<'info>,
     /// CHECK: in_mint (same as pay_mint)
     #[account(mut)]
     pub in_mint: AccountInfo<'info>,

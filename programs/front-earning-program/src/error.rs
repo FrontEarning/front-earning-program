@@ -14,4 +14,8 @@ pub enum CustomError {
     InputTooSmall,
     #[msg("Insufficient liquidity")]
     InsufficientLiquidity,
+    #[msg("Nothing to withdraw")]
+    NothingToWithdraw,
+    #[msg("Unauthorized")]
+    Unauthorized,
 }
