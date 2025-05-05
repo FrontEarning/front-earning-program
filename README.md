@@ -3,9 +3,9 @@
 
 This program implements **delayed settlement into instant discounts** using Perena's USD* basket and Numeraire AMM.
 
-* *Buyer* pays with USD*/USDC/USDT, gets an immediate discount.
-* *Seller* waits an agreed period (default 1 year) and receives the principal + half of the USD* yield.
-* Borrower supplies the small "gap" capital(like 2 USD) locks for the same period, and later withdraws their principal + the other half or more of the yield.
+* **Buyer** — Pays with **USDC / USDT / USD\*** and receives an on‑chain discount immediately.
+* **Seller** — After a configurable waiting period (default 1 year) withdraws **principal + ½ of the USD\* yield**.
+* **Borrower** — Can deposit at any time into the pool; earns the base USD\* APY while waiting, plus an **extra ½ of the yield** when their liquidity is matched to a discount gap.
 
 ## Overview
 
