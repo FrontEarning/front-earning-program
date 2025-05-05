@@ -9,6 +9,18 @@ This program implements **delayed settlement into instant discounts** using Pere
 
 ## Overview
 
+```mermaid
+sequenceDiagram
+  autonumber
+  Buyer->>Program: execute_payment(amount)
+  Note right of Program: optional swap via Numeraire
+  Program->>USD* Vault: deposit 100 USD*
+  alt After 1 year
+    Seller->>Program: settle()
+    Program->>Seller: 102 (≈ principal + 2)
+    Program->>Borrower: 4 → gap (2) + yield (2)
+  end
+```
 
 ## Instructions
 
@@ -44,6 +56,25 @@ Callable by seller after `settle_wait_secs`. Status => Settled.
 Borrower withdraws after `invest_lock_secs` (default 1 year). Status => Withdrawn.
 
 ## Flow
+
+```mermaid
+flowchart LR
+  subgraph Off‑chain
+    A[Mobile / Web dApp]
+    B[Backend Scheduler]
+  end
+  subgraph On‑chain (Anchor)
+    P[Program<br/>Rebate Pay]
+    VaultUSDC((Vault USDC))
+    VaultUSD*[(Vault USD*)]
+    N{{Numeraire<br/>AMM}}
+  end
+  A -- sign TX --> P
+  P -- CPI swap --> N
+  P -- deposit --> VaultUSD*
+  B -- cron settle --> P
+  P -- payout --> A
+```
 
 ## Build & Test
 
