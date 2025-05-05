@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use crate::states::config::*;
-use crate::error::CustomError;
 
 pub fn init_config(
     ctx: Context<InitConfig>,

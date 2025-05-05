@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke_signed;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint, Approve};
+use anchor_spl::token::{self, Token, TokenAccount, Transfer, Approve};
 use crate::states::{payment::*, Config};
 use crate::error::CustomError;
 
