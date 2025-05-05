@@ -32,7 +32,7 @@ After payment, status will be set to `Funded`.
 
 5. invest_gap
 
-Borrower locks any USD* gap capital. PDA seeds [b"investment", borrower].
+Borrower locks any USD*/USDC/USDT gap capital. PDA seeds [b"investment", borrower].
 Status => Locked.
 
 6. settle
