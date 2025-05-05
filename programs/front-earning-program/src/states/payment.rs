@@ -4,7 +4,6 @@ use anchor_lang::prelude::*;
 pub enum PaymentStatus {
     Initialized,
     Funded,
-    Deposited,
     Settled,
 }
 
@@ -13,16 +12,15 @@ pub struct Payment {
     pub seller: Pubkey,
     pub buyer: Pubkey,
     pub borrower: Pubkey, // gap-funder
-    pub price_usd: u64,
-    pub discount_bps: u16,
-    pub paid_mint: Pubkey,
+    pub amount: u64,
+    pub owner: u64,
     pub paid_amount: u64,
-    pub usd_star_deposit: u64, // amount of USD* sent to vault
-    pub created_ts: i64,
-    pub maturity_ts: i64,
+    pub paid_mint: Pubkey,
+    pub discount_bps: u16,
+    pub start_ts: i64,
     pub status: PaymentStatus,
 }
 
-impl Payment {
-    pub const LEN: usize = 8 + 32*3 + 8 + 2 + 32 + 8 + 8 + 8 + 8 + 1;
+impl Payment { 
+    pub const LEN: usize = 8 + 32*3 + 8 + 8 + 32 + 2 + 8 + 1; 
 }

@@ -12,4 +12,6 @@ pub enum CustomError {
     UnsupportedToken,
     #[msg("Input amount too small")]
     InputTooSmall,
+    #[msg("Insufficient liquidity")]
+    InsufficientLiquidity,
 }

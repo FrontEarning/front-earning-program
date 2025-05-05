@@ -1,18 +1,15 @@
 use anchor_lang::prelude::*;
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
-pub struct DiscountEntry {
-    pub mint: Pubkey,
-    pub discount_bps: u16,
-}
-
 #[account]
-pub struct GlobalConfig {
+pub struct Config {
     pub owner: Pubkey,
-    pub discounts: Vec<DiscountEntry>,
-    pub maturity_period_secs: i64, // default 31_536_000 (1yr = 365d)
+    pub usdc_discount_bps: u16,
+    pub usdt_discount_bps: u16,
+    pub usd_star_discount_bps: u16,
+    pub invest_lock_secs: i64,  // default = 1yr, mvp = ?
+    pub settle_wait_secs: i64,  // default = 1hr, mvp = ?
 }
 
-impl GlobalConfig {
-    pub const LEN_FIXED: usize = 8 + 32 + 8;
+impl Config {
+    pub const LEN: usize = 8 + 32 + 2*3 + 8 + 8;
 }

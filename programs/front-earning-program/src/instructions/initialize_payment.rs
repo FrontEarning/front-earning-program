@@ -1,46 +1,41 @@
 use anchor_lang::prelude::*;
-use crate::states::{config::*, Payment, PaymentStatus};
+use crate::{states::{config::*, Payment, PaymentStatus}, CustomError};
 
 pub fn initialize_payment(
     ctx: Context<InitializePayment>,
-    price_usd: u64,
+    price: u64,
 ) -> Result<()> {
-    let payment = &mut ctx.accounts.payment;
+    require!(price > 0, CustomError::InputTooSmall);
     let config = &ctx.accounts.config;
+    let payment = &mut ctx.accounts.payment;
 
     payment.seller = ctx.accounts.seller.key();
-    payment.buyer = ctx.accounts.buyer.key();
-    payment.borrower = Pubkey::default();
-    payment.price_usd = price_usd;
-    payment.discount_bps = 0;
-    payment.paid_mint = Pubkey::default();
+    payment.discount_bps = 0; // initial discount
+    payment.amount = price;
     payment.paid_amount = 0;
-    payment.usd_star_deposit = 0;
-    payment.created_ts = Clock::get()?.unix_timestamp;
-    payment.maturity_ts = payment.created_ts + config.maturity_period_secs;
+    payment.paid_mint = Pubkey::default();
     payment.status = PaymentStatus::Initialized;
 
     Ok(())
 }
 
 #[derive(Accounts)]
-#[instruction(price_usd: u64)]
+#[instruction(price: u64, maturity_ts: i64)]
 pub struct InitializePayment<'info> {
+    #[account(mut)]
+    pub seller: Signer<'info>,
+
+    #[account(mut)]
+    pub config: Account<'info, Config>,
+
     #[account(
         init,
-        payer = buyer,
+        payer = seller,
         space = 8 + Payment::LEN,
-        seeds = [b"payment", buyer.key().as_ref(), seller.key().as_ref(), price_usd.to_le_bytes().as_ref()],
+        seeds = [b"payment", seller.key().as_ref(), price.to_le_bytes().as_ref()],
         bump
     )]
     pub payment: Account<'info, Payment>,
-    pub config: Account<'info, GlobalConfig>,
-
-    #[account(mut)]
-    pub buyer: Signer<'info>,
-
-    /// CHECK: seller signs nothing here
-    pub seller: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
