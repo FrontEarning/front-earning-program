@@ -1,13 +1,19 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint};
+use anchor_lang::solana_program::instruction::Instruction;
+use anchor_lang::solana_program::program::invoke_signed;
+use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint, Approve};
 use crate::states::{config::*, payment::*};
 use crate::error::CustomError;
-use crate::swap_stable::{SwapStable, swap_stable};
+
+const SWAP_EXACT_IN_DISCRIMINATOR: [u8; 8] = [104, 104, 131, 86, 161, 189, 180, 216];
 
 pub fn execute_payment(
     ctx: Context<ExecutePayment>,
     pay_mint: Pubkey,
     pay_amount: u64,
+    in_index: u8,
+    out_index: u8,
+    min_out: u64,
 ) -> Result<()> {
     // 1. Find discount
     let config = &ctx.accounts.config;
@@ -16,8 +22,7 @@ pub fn execute_payment(
         .ok_or(CustomError::UnsupportedToken)?;
     let discount_bps = discount_entry.discount_bps;
 
-    let payment = &mut ctx.accounts.payment;
-    require!(payment.status == PaymentStatus::Initialized, CustomError::InvalidState);
+    require!(ctx.accounts.payment.status == PaymentStatus::Initialized, CustomError::InvalidState);
 
     // 2. move tokens from buyer to vault_in
     token::transfer(
@@ -33,39 +38,69 @@ pub fn execute_payment(
     )?;
 
     // 3. if mint != USD*, swap via internal CPI
-    // if pay_mint != ctx.accounts.usd_star_mint.key() {
-    //     let swap_ctx = Context::new(
-    //         &ctx.program_id,
-    //         SwapStable {
-    //             payment: unsafe { core::mem::transmute(&ctx.accounts.payment) },
-    //             vault_in: unsafe { core::mem::transmute(&ctx.accounts.vault_in) },
-    //             vault_out: unsafe { core::mem::transmute(&ctx.accounts.out_trader) },
-    //             pool: ctx.accounts.pool.clone(),
-    //             in_mint: ctx.accounts.in_mint.clone(),
-    //             out_mint: ctx.accounts.out_mint.clone(),
-    //             in_trader: unsafe { core::mem::transmute(&ctx.accounts.in_trader) },
-    //             out_trader: unsafe { core::mem::transmute(&ctx.accounts.out_trader) },
-    //             in_vault: None,
-    //             out_vault: None,
-    //             numeraire_config: ctx.accounts.numeraire_config.clone(),
-    //             payer: ctx.accounts.payer.clone(),
-    //             token_program: ctx.accounts.token_program.clone(),
-    //             token_2022_program: ctx.accounts.token_2022_program.clone(),
-    //         },
-    //         vec![],
-    //         &ctx.bumps,
-    //     );
+    if pay_mint != ctx.accounts.usd_star_mint.key() {
+        let binding = ctx.accounts.payment.key();
+        let seeds: &[&[u8]] = &[
+            b"vault",
+            binding.as_ref(),
+            &[ctx.bumps.vault_in],
+        ];
+        token::approve(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(), 
+                Approve {
+                    to: ctx.accounts.vault_in.to_account_info(),
+                    delegate: ctx.accounts.in_trader.to_account_info(),
+                    authority: ctx.accounts.vault_in.to_account_info(),
+                }, 
+                &[seeds]),
+                pay_amount,
+        )?;
 
-    //     swap_stable(
-    //         swap_ctx,
-    //         0, // in_index - assume mapping 0/1 for mvp
-    //         1, // out_index
-    //         pay_amount,
-    //         0, // no slippage check in mvp
-    //     )?;
-    // }
+        let payload = SwapExactInHintlessData {
+            in_index,
+            out_index,
+            exact_amount_in: pay_amount,
+            min_amount_out: min_out,
+        };
+        let mut data = SWAP_EXACT_IN_DISCRIMINATOR.to_vec();
+        data.extend(payload.try_to_vec()?);
+
+        let ix = Instruction {
+            program_id: *ctx.accounts.pool.owner,
+            accounts: vec![
+                AccountMeta::new(ctx.accounts.pool.key(), false),
+                AccountMeta::new(ctx.accounts.in_mint.key(), false),
+                AccountMeta::new(ctx.accounts.out_mint.key(), false),
+                AccountMeta::new(ctx.accounts.in_trader.key(), false),
+                AccountMeta::new(ctx.accounts.out_trader.key(), false),
+                AccountMeta::new_readonly(ctx.accounts.numeraire_config.key(), false),
+                AccountMeta::new(ctx.accounts.vault_in.key(), true), // signer (payer)
+                AccountMeta::new_readonly(ctx.accounts.token_program.key(), false),
+                AccountMeta::new_readonly(ctx.accounts.token_2022_program.key(), false),
+            ],
+            data,
+        };
+
+        invoke_signed(
+            &ix,
+            &[
+                ctx.accounts.pool.to_account_info(),
+                ctx.accounts.in_mint.to_account_info(),
+                ctx.accounts.out_mint.to_account_info(),
+                ctx.accounts.in_trader.to_account_info(),
+                ctx.accounts.out_trader.to_account_info(),
+                ctx.accounts.numeraire_config.to_account_info(),
+                ctx.accounts.vault_in.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.token_2022_program.to_account_info(),
+            ],
+            &[seeds],
+        )?;
+    }
 
     // 4. record payment state
+    let payment = &mut ctx.accounts.payment;
     payment.paid_mint = pay_mint;
     payment.paid_amount = pay_amount;
     payment.discount_bps = discount_bps;
@@ -78,6 +113,7 @@ pub fn execute_payment(
 pub struct ExecutePayment<'info> {
     #[account(mut)]
     pub payment: Account<'info, Payment>,
+
     pub config: Account<'info, GlobalConfig>,
 
     // Token vault that temporarily hodls buyer token(PDA)
@@ -94,7 +130,7 @@ pub struct ExecutePayment<'info> {
     pub buyer: Signer<'info>,
 
     #[account(mut)]
-    pub buyer_source: Account<'info, TokenAccount>,
+    pub buyer_source: Account<'info, TokenAccount>, // ATA for chosen token_mint
 
     // ---------- Numeraire pool & related (perena swap) ----------
     /// CHECK: pool
@@ -105,9 +141,10 @@ pub struct ExecutePayment<'info> {
     pub out_mint: AccountInfo<'info>,
 
     #[account(mut)]
-    pub out_trader: Account<'info, TokenAccount>,
-    #[account(mut)]
     pub in_trader: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub out_trader: Account<'info, TokenAccount>,
 
     /// CHECK: numeraire config
     pub numeraire_config: AccountInfo<'info>,
@@ -117,4 +154,12 @@ pub struct ExecutePayment<'info> {
     pub token_program: Program<'info, Token>,
     /// CHECK: token2022
     pub token_2022_program: AccountInfo<'info>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+struct SwapExactInHintlessData {
+    in_index: u8,
+    out_index: u8,
+    exact_amount_in: u64,
+    min_amount_out: u64,
 }

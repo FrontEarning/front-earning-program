@@ -13,7 +13,6 @@ pub use instructions::{
     init_config,
     initialize_payment,
     invest_gap,
-    swap_stable,
     withdraw_investment,
     execute_payment,
 };
